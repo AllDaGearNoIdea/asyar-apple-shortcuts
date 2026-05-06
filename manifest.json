@@ -1,0 +1,32 @@
+{
+  "id": "com.asyar.shortcuts",
+  "name": "Apple Shortcuts",
+  "version": "1.0.0",
+  "description": "Search and run Apple Shortcuts.",
+  "author": "Developer",
+  "icon": "🔗",
+  "type": "extension",
+  "asyarSdk": "^2.3.0",
+  "platforms": ["macos"],
+  "background": { "main": "dist/worker.js" },
+  "permissions": [
+    "shell:spawn",
+    "fs:watch",
+    "storage:read",
+    "storage:write",
+    "notifications:send"
+  ],
+  "permissionArgs": {
+    "fs:watch": ["~/Library/Shortcuts/**"]
+  },
+  "searchable": true,
+  "commands": [
+    {
+      "id": "open",
+      "name": "Search Shortcuts",
+      "description": "Search and run Apple Shortcuts",
+      "mode": "view",
+      "component": "SearchView"
+    }
+  ]
+}
