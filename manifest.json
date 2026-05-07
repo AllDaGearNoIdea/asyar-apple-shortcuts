@@ -2,7 +2,7 @@
   "id": "com.asyar.shortcuts",
   "name": "Apple Shortcuts",
   "version": "1.0.0",
-  "description": "Search and run Apple Shortcuts.",
+  "description": "Search and run Apple Shortcuts with optional input.",
   "author": "Developer",
   "icon": "🔗",
   "type": "extension",
@@ -19,7 +19,6 @@
   "permissionArgs": {
     "fs:watch": ["~/Library/Shortcuts/**"]
   },
-  "searchable": true,
   "commands": [
     {
       "id": "open",
