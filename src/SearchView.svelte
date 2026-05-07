@@ -14,22 +14,41 @@
   const extensions = context.getService<IExtensionManager>('extensions');
 
   let shortcuts = $state<Shortcut[]>([]);
+  /**
+   * Per-shortcut "accepts input" flags, mirrored from the worker's state
+   * key `shortcuts.acceptsInputFlags`. A `true` entry means the launcher
+   * should declare an `input` argument for that shortcut so root-search
+   * Tab opens the inline chip. Missing entries default to false.
+   */
+  let acceptsInputFlags = $state<Record<string, boolean>>({});
   let loaded = $state(false);
   let searchQuery = $state('');
   let selectedIndex = $state(0);
   let runError = $state<string | null>(null);
 
   let unsubscribe: (() => Promise<void>) | null = null;
+  let unsubscribeFlags: (() => Promise<void>) | null = null;
 
   void (async () => {
     try {
       const initial = (await stateProxy.get('shortcuts.list')) as Shortcut[] | null;
       if (initial && Array.isArray(initial)) shortcuts = initial;
     } catch {}
+    try {
+      const initialFlags = (await stateProxy.get('shortcuts.acceptsInputFlags')) as
+        | Record<string, boolean>
+        | null;
+      if (initialFlags && typeof initialFlags === 'object') acceptsInputFlags = initialFlags;
+    } catch {}
     loaded = true;
     try {
       unsubscribe = await stateProxy.subscribe('shortcuts.list', (v) => {
         shortcuts = (v as Shortcut[] | null) ?? [];
+      });
+    } catch {}
+    try {
+      unsubscribeFlags = await stateProxy.subscribe('shortcuts.acceptsInputFlags', (v) => {
+        acceptsInputFlags = (v as Record<string, boolean> | null) ?? {};
       });
     } catch {}
   })();
@@ -67,6 +86,7 @@
 
   onDestroy(() => {
     if (unsubscribe) void unsubscribe();
+    if (unsubscribeFlags) void unsubscribeFlags();
   });
 
   let filtered = $derived.by(() => {
@@ -90,6 +110,25 @@
       if (!reply.ok) {
         runError = reply.message;
       }
+    } catch (err: unknown) {
+      runError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * Flip the "accepts input" flag for one shortcut. The worker persists
+   * the change and re-publishes the dynamic command list so the
+   * launcher's root-search argument mode reflects the new state on the
+   * next keystroke.
+   */
+  async function toggleAcceptsInput(shortcut: Shortcut, event: Event) {
+    event.stopPropagation();
+    const current = acceptsInputFlags[shortcut.id] === true;
+    try {
+      await context.request<{ uuid: string; accepts: boolean }, { ok: true }>(
+        'setAcceptsInput',
+        { uuid: shortcut.id, accepts: !current },
+      );
     } catch (err: unknown) {
       runError = err instanceof Error ? err.message : String(err);
     }
@@ -138,6 +177,17 @@
             </svg>
           </span>
           <span class="entry-title">{shortcut.name}</span>
+          <button
+            type="button"
+            class="input-toggle"
+            class:on={acceptsInputFlags[shortcut.id] === true}
+            onclick={(e) => toggleAcceptsInput(shortcut, e)}
+            title={acceptsInputFlags[shortcut.id] === true
+              ? 'Accepts text input — Tab in root search opens the input chip'
+              : 'No input — Enter in root search runs the shortcut directly'}
+          >
+            {acceptsInputFlags[shortcut.id] === true ? '↪ Input' : '+ Input'}
+          </button>
           <span class="tag">Shortcut</span>
         </div>
       {/each}
@@ -207,6 +257,30 @@
     background: var(--bg-tertiary);
     color: var(--text-tertiary);
     flex-shrink: 0;
+  }
+
+  .input-toggle {
+    font-family: inherit;
+    font-size: 11px;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    border: 1px solid var(--separator);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+
+  .input-toggle:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
+  .input-toggle.on {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border-color: var(--accent-primary);
   }
 
   .empty {
