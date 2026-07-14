@@ -6,7 +6,7 @@
   "author": "Developer",
   "icon": "🔗",
   "type": "extension",
-  "asyarSdk": "^2.3.0",
+  "asyarSdk": "^4.0.0",
   "platforms": ["macos"],
   "background": { "main": "dist/worker.js" },
   "permissions": [

@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  asyar-sdk: link:../asyar-sdk
+  asyar-sdk: link:../asyar/asyar-sdk
 
 importers:
 
@@ -19,8 +19,8 @@ importers:
         specifier: ^5.0.0
         version: 5.1.1(svelte@5.55.3)(vite@6.4.2(@types/node@25.6.0))
       asyar-sdk:
-        specifier: link:../asyar-sdk
-        version: link:../asyar-sdk
+        specifier: link:../asyar/asyar-sdk
+        version: link:../asyar/asyar-sdk
       typescript:
         specifier: ^5.0.0
         version: 5.9.3

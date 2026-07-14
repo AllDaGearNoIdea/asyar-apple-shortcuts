@@ -6,7 +6,7 @@ import { resolve } from 'path';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
-const sdkSrcDir = resolve(__dirname, '../asyar-sdk/src');
+const sdkSrcDir = resolve(__dirname, '../asyar/asyar-sdk/src');
 const sdkSubpaths = ['contracts', 'worker', 'view'] as const;
 const useLocalSdk = sdkSubpaths.every((sub) =>
   existsSync(resolve(sdkSrcDir, `${sub}.ts`)),
