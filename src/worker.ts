@@ -8,6 +8,7 @@ import type {
   Extension,
   ExtensionStateProxy,
   ICommandService,
+  IFeedbackService,
   IFileSystemWatcherService,
   ILogService,
   IShellService,
@@ -16,6 +17,7 @@ import type {
 } from 'asyar-sdk/contracts';
 
 import manifest from '../manifest.json';
+import { runShortcutWithFeedback } from './lib/runShortcutFlow';
 import { pullList, runShortcut, type Shortcut } from './lib/shortcutsWorker';
 import { loadShortcutsCache, saveShortcutsCache } from './lib/store';
 
@@ -49,6 +51,7 @@ class ShortcutsWorker implements Extension {
   private storage: IStorageService;
   private state: ExtensionStateProxy;
   private commands: ICommandService;
+  private feedback: IFeedbackService;
 
   private shortcuts: Shortcut[] = [];
   /**
@@ -75,6 +78,7 @@ class ShortcutsWorker implements Extension {
     this.storage = ctx.getService<IStorageService>('storage');
     this.state = ctx.getService<ExtensionStateProxy>('state');
     this.commands = ctx.getService<ICommandService>('commands');
+    this.feedback = ctx.getService<IFeedbackService>('feedback');
   }
 
   async initialize(): Promise<void> {}
@@ -143,13 +147,15 @@ class ShortcutsWorker implements Extension {
 
     const shortcut = this.shortcuts.find((s) => s.id === commandId);
     if (!shortcut) {
-      // Fallback: callers that pre-date UUID parsing may still pass a
-      // bare name. `shortcuts run` accepts either form.
+      // `shortcuts run` accepts either a UUID or a name, so an uncached
+      // dynamic command can still execute through the normal feedback flow.
       this.logger.warn(
         `Apple Shortcuts: no in-memory entry for id '${commandId}' — running as name`,
       );
-      await runShortcut(this.shell, commandId, input);
-      return { ok: true };
+      return this.runShortcutAndReport(
+        { id: commandId, name: commandId },
+        input,
+      );
     }
     return this.runShortcutAndReport(shortcut, input);
   }
@@ -172,22 +178,25 @@ class ShortcutsWorker implements Extension {
     shortcut: Shortcut,
     input?: string,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
-    try {
-      // Prefer running by UUID when available (rename-safe); fall back
-      // to name when the cache pre-dates the UUID-parsed format.
-      const target = shortcut.id || shortcut.name;
-      await runShortcut(this.shell, target, input);
+    const result = await runShortcutWithFeedback(
+      this.feedback,
+      (target, shortcutInput) =>
+        runShortcut(this.shell, target, shortcutInput),
+      shortcut,
+      input,
+    );
+
+    if (result.ok) {
       this.logger.info(
         `Apple Shortcuts: ran "${shortcut.name}"${input ? ' with input' : ''}`,
       );
-      return { ok: true };
-    } catch (err) {
-      const message = describe(err);
+    } else {
       this.logger.error(
-        `Apple Shortcuts: run "${shortcut.name}" failed: ${message}`,
+        `Apple Shortcuts: run "${shortcut.name}" failed: ${result.message}`,
       );
-      return { ok: false, message };
     }
+
+    return result;
   }
 
   private async refresh(): Promise<void> {

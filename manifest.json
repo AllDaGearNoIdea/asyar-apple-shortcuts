@@ -6,15 +6,14 @@
   "author": "Developer",
   "icon": "🔗",
   "type": "extension",
-  "asyarSdk": "^2.3.0",
+  "asyarSdk": "^4.3.0",
   "platforms": ["macos"],
   "background": { "main": "dist/worker.js" },
   "permissions": [
     "shell:spawn",
     "fs:watch",
     "storage:read",
-    "storage:write",
-    "notifications:send"
+    "storage:write"
   ],
   "permissionArgs": {
     "fs:watch": ["~/Library/Shortcuts/**"]
