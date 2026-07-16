@@ -1,17 +1,24 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import type { ExtensionContext } from 'asyar-sdk/view';
-  import type { ExtensionStateProxy, IExtensionManager } from 'asyar-sdk/contracts';
+  import type {
+    ExtensionStateProxy,
+    IExtensionManager,
+    IFeedbackService,
+    ISearchService,
+  } from 'asyar-sdk/contracts';
 
+  import { rankShortcuts } from './lib/rankShortcuts';
   import type { Shortcut } from './lib/shortcutsWorker';
 
   interface Props {
     context: ExtensionContext;
+    stateProxy: ExtensionStateProxy;
+    extensions: IExtensionManager;
+    feedback: IFeedbackService;
+    search: ISearchService;
   }
-  let { context }: Props = $props();
-
-  const stateProxy = context.getService<ExtensionStateProxy>('state');
-  const extensions = context.getService<IExtensionManager>('extensions');
+  let { context, stateProxy, extensions, feedback, search }: Props = $props();
 
   let shortcuts = $state<Shortcut[]>([]);
   /**
@@ -24,7 +31,8 @@
   let loaded = $state(false);
   let searchQuery = $state('');
   let selectedIndex = $state(0);
-  let runError = $state<string | null>(null);
+  let filtered = $state<Shortcut[]>([]);
+  let rankRevision = 0;
 
   let unsubscribe: (() => Promise<void>) | null = null;
   let unsubscribeFlags: (() => Promise<void>) | null = null;
@@ -89,10 +97,17 @@
     if (unsubscribeFlags) void unsubscribeFlags();
   });
 
-  let filtered = $derived.by(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return shortcuts;
-    return shortcuts.filter((s) => s.name.toLowerCase().includes(q));
+  $effect(() => {
+    const revision = ++rankRevision;
+    void rankShortcuts(search, searchQuery, shortcuts)
+      .then((ranked) => {
+        if (revision !== rankRevision) return;
+        filtered = ranked;
+      })
+      .catch((error: unknown) => {
+        if (revision !== rankRevision) return;
+        void reportFailure('apple_shortcuts_search_failed', error);
+      });
   });
 
   $effect(() => {
@@ -101,17 +116,15 @@
   });
 
   async function handleRun(shortcut: Shortcut) {
-    runError = null;
     try {
       const reply = await context.request<
         { name: string },
         { ok: true } | { ok: false; message: string }
       >('runShortcut', { name: shortcut.name });
-      if (!reply.ok) {
-        runError = reply.message;
-      }
+      // The worker reports both success and failure through unified feedback.
+      void reply;
     } catch (err: unknown) {
-      runError = err instanceof Error ? err.message : String(err);
+      await reportFailure('apple_shortcuts_run_request_failed', err);
     }
   }
 
@@ -130,7 +143,21 @@
         { uuid: shortcut.id, accepts: !current },
       );
     } catch (err: unknown) {
-      runError = err instanceof Error ? err.message : String(err);
+      await reportFailure('apple_shortcuts_input_setting_failed', err);
+    }
+  }
+
+  async function reportFailure(kind: string, error: unknown): Promise<void> {
+    const developerDetail = error instanceof Error ? error.message : String(error);
+    try {
+      await feedback.report({
+        kind,
+        severity: 'error',
+        retryable: true,
+        developerDetail,
+      });
+    } catch {
+      // Avoid replacing the original operation failure with feedback IPC noise.
     }
   }
 
@@ -141,12 +168,6 @@
 </script>
 
 <div class="container">
-  {#if runError}
-    <div class="error" role="alert">
-      <strong>Error:</strong> {runError}
-    </div>
-  {/if}
-
   {#if !loaded && shortcuts.length === 0}
     <div class="empty">
       <p class="empty-text">Loading shortcuts...</p>
@@ -203,14 +224,6 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-  }
-
-  .error {
-    padding: var(--space-2) var(--space-4);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border-color);
-    font-size: 12px;
   }
 
   .list {

@@ -7,15 +7,18 @@
     "dev": "asyar dev",
     "build": "asyar build",
     "publish": "asyar publish",
-    "link": "asyar link"
+    "link": "asyar link",
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "svelte": "^5.0.0"
   },
   "devDependencies": {
-    "asyar-sdk": "^2.3.0",
+    "asyar-sdk": "^4.3.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "typescript": "^5.0.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^2.1.0"
   }
 }
