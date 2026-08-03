@@ -5,33 +5,28 @@ export interface Shortcut {
   id: string;
   /** Current display name. May change if the user renames the shortcut. */
   name: string;
+  /** Icon background colour as Shortcuts stores it (signed RGBA int). */
+  colorValue?: number;
+  /** Icon glyph number as Shortcuts stores it. */
+  glyph?: number;
+  /**
+   * App the shortcut is associated with. Shortcuts shows that app's icon
+   * instead of the glyph whenever this is set, so it wins here too.
+   */
+  appBundleId?: string;
+  /** True when the shortcut declares Shortcut Input variables. */
+  takesInput?: boolean;
+  /** Resolved row icon: an app icon URL or a rendered tile data URI. */
+  icon?: string;
 }
 
 /**
- * Enumerate the user's Apple Shortcuts. Uses `--show-identifiers` so each
- * shortcut comes back with its stable UUID — safe to persist as the
- * argument-default key, immune to user renames.
+ * The hand-off to `shortcuts` never happened: the process could not be
+ * spawned at all, so nothing ran and nothing else will report it. A
+ * non-zero exit is the opposite case, the shortcut ran and failed on its
+ * own terms, and Shortcuts.app raises its own notification for that.
  */
-export function pullList(shell: IShellService): Promise<Shortcut[]> {
-  return new Promise((resolve, reject) => {
-    const handle: ShellHandle = shell.spawn({
-      program: '/usr/bin/shortcuts',
-      args: ['list', '--show-identifiers'],
-    });
-    const lines: string[] = [];
-    handle.onChunk(({ stream, data }) => {
-      if (stream === 'stdout') lines.push(data);
-    });
-    handle.onDone((code) => {
-      if (code === 0 || code === undefined) {
-        resolve(parseList(lines));
-      } else {
-        reject(new Error(`shortcuts list exited with code ${code}`));
-      }
-    });
-    handle.onError((err) => reject(new Error(err.message)));
-  });
-}
+export class ShortcutHandoffError extends Error {}
 
 /**
  * Run a shortcut by id or name, optionally piping `input` to it via stdin.
@@ -42,6 +37,11 @@ export function pullList(shell: IShellService): Promise<Shortcut[]> {
  * `/bin/sh -c 'printf … | shortcuts run … --input-path -'` when an input
  * value is supplied. With no input, we run `shortcuts run` directly to
  * avoid the extra trust prompt for `/bin/sh`.
+ *
+ * The spawn is `silent` because the launcher would otherwise announce
+ * every successful run with a "Script finished" notification quoting the
+ * raw command line. Silence covers failures too, so the caller reports
+ * those itself.
  */
 export function runShortcut(
   shell: IShellService,
@@ -53,6 +53,7 @@ export function runShortcut(
       input !== undefined && input !== ''
         ? shell.spawn({
             program: '/bin/sh',
+            silent: true,
             args: [
               '-c',
               `printf %s ${shQuote(input)} | /usr/bin/shortcuts run ${shQuote(idOrName)} --input-path -`,
@@ -60,6 +61,7 @@ export function runShortcut(
           })
         : shell.spawn({
             program: '/usr/bin/shortcuts',
+            silent: true,
             args: ['run', idOrName],
           });
 
@@ -70,7 +72,35 @@ export function runShortcut(
         reject(new Error(`shortcuts run exited with code ${code}`));
       }
     });
-    handle.onError((err) => reject(new Error(err.message)));
+    handle.onError((err) => reject(new ShortcutHandoffError(err.message)));
+  });
+}
+
+/**
+ * Open a shortcut in Shortcuts.app's editor, launching the app if it isn't
+ * already running. `shortcuts://open-shortcut` takes a name, not an id, so
+ * this is the one path that cannot be made rename-safe.
+ *
+ * Routed through `/bin/sh` rather than spawning `open` directly so the
+ * extension does not have to ask for a second program's trust; the shell is
+ * already granted for the input-piping path.
+ */
+export function openShortcutInEditor(
+  shell: IShellService,
+  name: string,
+): Promise<void> {
+  const url = `shortcuts://open-shortcut?name=${encodeURIComponent(name)}`;
+  return new Promise((resolve, reject) => {
+    const handle = shell.spawn({
+      program: '/bin/sh',
+      silent: true,
+      args: ['-c', `/usr/bin/open ${shQuote(url)}`],
+    });
+    handle.onDone((code) => {
+      if (code === 0 || code === undefined) resolve();
+      else reject(new Error(`open exited with code ${code}`));
+    });
+    handle.onError((err) => reject(new ShortcutHandoffError(err.message)));
   });
 }
 
@@ -96,7 +126,7 @@ function shQuote(s: string): string {
  * suffix is missing, so an older `shortcuts` binary that doesn't emit
  * identifiers still produces a usable list (without rename-safety).
  */
-function parseList(lines: string[]): Shortcut[] {
+export function parseList(lines: string[]): Shortcut[] {
   const out: Shortcut[] = [];
   for (const raw of lines) {
     const line = raw.trim();

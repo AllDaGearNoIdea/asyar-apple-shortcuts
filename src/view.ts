@@ -1,4 +1,5 @@
 import 'asyar-sdk/tokens.css';
+import './lib/launcherList/tokens-extra.css';
 import { mount } from 'svelte';
 import {
   ExtensionContext,
@@ -50,7 +51,7 @@ extensionBridge.registerExtensionImplementation(extensionId, impl);
 
 const app = mount(SearchView, {
   target: document.getElementById('app')!,
-  props: { context },
+  props: { context, extensionId },
 });
 
 export default app;

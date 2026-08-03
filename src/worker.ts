@@ -7,7 +7,9 @@ import type {
   DynamicCommandRegistration,
   Extension,
   ExtensionStateProxy,
+  IApplicationService,
   ICommandService,
+  IFeedbackService,
   IFileSystemWatcherService,
   ILogService,
   IShellService,
@@ -16,14 +18,35 @@ import type {
 } from 'asyar-sdk/contracts';
 
 import manifest from '../manifest.json';
-import { pullList, runShortcut, type Shortcut } from './lib/shortcutsWorker';
+import {
+  openShortcutInEditor,
+  runShortcut,
+  ShortcutHandoffError,
+  type Shortcut,
+} from './lib/shortcutsWorker';
+import { pullShortcutList } from './lib/shortcutsDb';
+import { ShortcutIconResolver } from './lib/shortcutIcons';
 import { loadShortcutsCache, saveShortcutsCache } from './lib/store';
 
 const STATE_KEY = 'shortcuts.list';
-const STATE_KEY_FLAGS = 'shortcuts.acceptsInputFlags';
-const STORAGE_KEY_FLAGS = 'acceptsInputFlags';
-
-type AcceptsInputFlags = Record<string, boolean>;
+const REFRESH_WARNING_STATE_KEY = 'shortcuts.refreshWarning';
+const BASIC_LIST_WARNING =
+  'Shortcut details could not be read. Showing the basic list without icons or input support.';
+const STALE_LIST_WARNING =
+  'Shortcuts could not be refreshed. Showing the last known list.';
+const EMPTY_LIST_WARNING = 'Shortcuts could not be loaded.';
+const WATCH_FAILED_WARNING =
+  'Shortcut changes are not being detected automatically. The list refreshes when this view opens.';
+const BASIC_WATCH_FAILED_WARNING =
+  'Shortcut details could not be read, and changes are not being detected automatically. Showing the basic list.';
+const BASIC_LIST_DESCRIPTION = 'Basic list — details unavailable';
+const STALE_LIST_DESCRIPTION = 'May be out of date — refresh failed';
+const WATCH_FAILED_DESCRIPTION = 'Not auto-updating';
+const BASIC_WATCH_FAILED_DESCRIPTION = 'Basic list — not auto-updating';
+const WATCH_REFRESH_DELAY_MS = 500;
+const FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
+/** Stands in when a shortcut has no icon of its own (the CLI fallback list). */
+const APP_ICON = manifest.icon;
 
 /**
  * Worker entry for the Apple Shortcuts extension.
@@ -41,6 +64,13 @@ type AcceptsInputFlags = Record<string, boolean>;
  * Refresh sources:
  *   - on activate (after restoring from cache)
  *   - on every fs-watch event for `~/Library/Shortcuts/`
+ *   - after a failure: one self-scheduled retry per failure episode, then
+ *     fs-event retries spaced by the cooldown, then user-driven retries
+ *     (the SearchView retries once on open while a warning is showing,
+ *     and has a Retry button)
+ *
+ * Every refresh also re-attempts the fs watch when it is down, so the
+ * user-driven paths heal a dead watcher too.
  */
 class ShortcutsWorker implements Extension {
   private logger: ILogService;
@@ -49,24 +79,20 @@ class ShortcutsWorker implements Extension {
   private storage: IStorageService;
   private state: ExtensionStateProxy;
   private commands: ICommandService;
+  private feedback: IFeedbackService;
+
+  private icons: ShortcutIconResolver;
 
   private shortcuts: Shortcut[] = [];
-  /**
-   * Per-shortcut flag for "this shortcut consumes Shortcut Input via
-   * `--input-path`". Default: missing/false → register WITHOUT arguments
-   * so Enter runs the shortcut directly with no chip-row friction.
-   *
-   * Apple's CLI offers no introspection for which shortcuts use Shortcut
-   * Input vs internal "Ask Each Time" actions, so the user marks the
-   * input-using ones explicitly via the SearchView toggle. Most
-   * shortcuts don't take Shortcut Input, so default-off is the honest
-   * starting state — the launcher only shows the input chip when the
-   * user knows it will actually reach the shortcut.
-   */
-  private acceptsInput: AcceptsInputFlags = {};
   private watcherHandle?: WatcherHandle;
+  private watchRefreshTimer?: number;
   private refreshing = false;
   private refreshQueued = false;
+  /** True from the first refresh failure until the next success. */
+  private refreshFailed = false;
+  /** Watcher-driven refreshes are deferred until this time after a failure. */
+  private refreshPausedUntil = 0;
+  private dynamicCommandWarning?: string;
 
   constructor(ctx: WorkerExtensionContext) {
     this.logger = ctx.getService<ILogService>('log');
@@ -75,16 +101,21 @@ class ShortcutsWorker implements Extension {
     this.storage = ctx.getService<IStorageService>('storage');
     this.state = ctx.getService<ExtensionStateProxy>('state');
     this.commands = ctx.getService<ICommandService>('commands');
+    this.feedback = ctx.getService<IFeedbackService>('feedback');
+    this.icons = new ShortcutIconResolver({
+      shell: this.shell,
+      storage: this.storage,
+      application: ctx.getService<IApplicationService>('application'),
+      logger: this.logger,
+    });
   }
 
   async initialize(): Promise<void> {}
 
   async activate(): Promise<void> {
-    // Restore the per-shortcut "accepts input" flags before publishing
-    // anything — they decide whether each registration carries an
-    // arguments schema, so they have to be in place before the first
-    // publish, not loaded asynchronously after.
-    await this.loadAcceptsInputFlags();
+    // Drop the retired per-shortcut "accepts input" overrides; the
+    // database flag is the only source now.
+    void this.storage.delete('acceptsInputFlags').catch(() => {});
 
     // Hydrate from cached list first so root search has results before
     // the (slow-ish) `shortcuts list` subprocess returns.
@@ -99,19 +130,16 @@ class ShortcutsWorker implements Extension {
       this.logger.warn(`Apple Shortcuts: cache load failed: ${describe(err)}`);
     }
 
+    // refresh() establishes the fs watch before its first read, so no
+    // change can slip between the initial list and the watcher coming up.
     void this.refresh();
-
-    try {
-      this.watcherHandle = await this.fsWatcher.watch(['~/Library/Shortcuts/']);
-      this.watcherHandle.onChange(() => {
-        void this.refresh();
-      });
-    } catch (err) {
-      this.logger.warn(`Apple Shortcuts: fs watch failed: ${describe(err)}`);
-    }
   }
 
   async deactivate(): Promise<void> {
+    if (this.watchRefreshTimer !== undefined) {
+      window.clearTimeout(this.watchRefreshTimer);
+      this.watchRefreshTimer = undefined;
+    }
     try {
       await this.watcherHandle?.dispose();
     } catch {}
@@ -141,17 +169,17 @@ class ShortcutsWorker implements Extension {
     const input =
       typeof userArgs.input === 'string' ? userArgs.input : undefined;
 
-    const shortcut = this.shortcuts.find((s) => s.id === commandId);
-    if (!shortcut) {
-      // Fallback: callers that pre-date UUID parsing may still pass a
-      // bare name. `shortcuts run` accepts either form.
+    const known = this.shortcuts.find((s) => s.id === commandId);
+    if (!known) {
+      // The list hasn't loaded, or the launcher still holds a registration
+      // we no longer publish. `shortcuts run` takes a UUID or a name, so the
+      // id runs either way, but there is no display name to go with it.
       this.logger.warn(
-        `Apple Shortcuts: no in-memory entry for id '${commandId}' — running as name`,
+        `Apple Shortcuts: no in-memory entry for id '${commandId}'; running it as given`,
       );
-      await runShortcut(this.shell, commandId, input);
-      return { ok: true };
     }
-    return this.runShortcutAndReport(shortcut, input);
+
+    return this.runShortcutAndReport(known ?? { id: commandId }, input);
   }
 
   onUnload = (): void => {};
@@ -168,54 +196,241 @@ class ShortcutsWorker implements Extension {
     return this.runShortcutAndReport({ id: name, name }, input);
   }
 
-  private async runShortcutAndReport(
-    shortcut: Shortcut,
-    input?: string,
+  /**
+   * Hand a shortcut to Shortcuts.app for editing. Unlike running, this has
+   * no silent-failure mode worth a notification: the app comes to the front
+   * on success, and its absence is the error message the view shows.
+   */
+  async editByName(
+    name: string,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     try {
-      // Prefer running by UUID when available (rename-safe); fall back
-      // to name when the cache pre-dates the UUID-parsed format.
-      const target = shortcut.id || shortcut.name;
-      await runShortcut(this.shell, target, input);
-      this.logger.info(
-        `Apple Shortcuts: ran "${shortcut.name}"${input ? ' with input' : ''}`,
-      );
+      await openShortcutInEditor(this.shell, name);
+      this.logger.info(`Apple Shortcuts: opened "${name}" for editing`);
       return { ok: true };
     } catch (err) {
       const message = describe(err);
-      this.logger.error(
-        `Apple Shortcuts: run "${shortcut.name}" failed: ${message}`,
-      );
+      this.logger.error(`Apple Shortcuts: edit "${name}" failed: ${message}`);
       return { ok: false, message };
     }
   }
 
-  private async refresh(): Promise<void> {
+  /**
+   * Both entry points land here. Only a failed hand-off is ours to report:
+   * nothing ran, the launcher has usually hidden by then, and the
+   * SearchView's inline error will not be read. Once `shortcuts` has the
+   * job, its own failures are its own to announce, and duplicating them
+   * would put two notifications on screen for one error.
+   *
+   * `name` is absent when the launcher dispatched an id we cannot resolve;
+   * the notification then carries the error alone rather than a raw UUID.
+   */
+  private async runShortcutAndReport(
+    target: { id: string; name?: string },
+    input?: string,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const label = target.name ?? target.id;
+    try {
+      await runShortcut(this.shell, target.id, input);
+      this.logger.info(
+        `Apple Shortcuts: ran "${label}"${input ? ' with input' : ''}`,
+      );
+      return { ok: true };
+    } catch (err) {
+      const message = describe(err);
+      this.logger.error(`Apple Shortcuts: run "${label}" failed: ${message}`);
+      if (err instanceof ShortcutHandoffError) {
+        await this.notifyRunFailure(target.name, message);
+      }
+      return { ok: false, message };
+    }
+  }
+
+  /**
+   * `sendBackground` is the notification path for work with no Asyar window
+   * attached. Gated by `notifications:send`.
+   */
+  private async notifyRunFailure(
+    name: string | undefined,
+    message: string,
+  ): Promise<void> {
+    try {
+      await this.feedback.sendBackground({
+        title: 'Shortcut failed',
+        body: name ? `${name}: ${message}` : message,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Apple Shortcuts: failure notification failed: ${describe(err)}`,
+      );
+    }
+  }
+
+  /**
+   * With no shortcuts left to publish, the extension contributes nothing to
+   * root search, so the feedback bar is the only place the user will see the
+   * failure. `error` severity has no TTL (`info`/`success` expire after 3s,
+   * `warning` after 8s) and this is usually raised at startup with the
+   * launcher hidden, so anything expiring would be missed.
+   */
+  private async reportRefreshFailure(
+    message: string,
+    detail: string,
+  ): Promise<void> {
+    try {
+      await this.feedback.report({
+        kind: 'manual',
+        severity: 'error',
+        retryable: false,
+        context: { message },
+        developerDetail: detail,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Apple Shortcuts: refresh failure report failed: ${describe(err)}`,
+      );
+    }
+  }
+
+  /**
+   * User-driven retry: the SearchView calls this once on open while a
+   * warning is showing, and from its Retry button. Goes through refresh()
+   * so it also re-attempts a dead fs watch.
+   */
+  async retryRefresh(): Promise<boolean> {
+    return this.refresh();
+  }
+
+  /**
+   * Debounced refresh, used for fs-watch events and the post-failure
+   * retry. After a failure the delay stretches to the cooldown, so a
+   * burst of filesystem events cannot turn one persistent problem into a
+   * retry loop; events landing during the cooldown coalesce into a single
+   * attempt when it expires.
+   */
+  private scheduleRefresh(): void {
+    const delay = Math.max(
+      WATCH_REFRESH_DELAY_MS,
+      this.refreshPausedUntil - Date.now(),
+    );
+    if (this.watchRefreshTimer !== undefined) {
+      window.clearTimeout(this.watchRefreshTimer);
+    }
+    this.watchRefreshTimer = window.setTimeout(() => {
+      this.watchRefreshTimer = undefined;
+      void this.refresh();
+    }, delay);
+  }
+
+  /**
+   * (Re)establish the fs watch. A miss leaves the list unable to
+   * auto-update, which refresh() surfaces on the rows; retrying here on
+   * every refresh means any later refresh can heal the watch as well.
+   */
+  private async ensureWatcher(): Promise<void> {
+    if (this.watcherHandle) return;
+    try {
+      this.watcherHandle = await this.fsWatcher.watch(['~/Library/Shortcuts/']);
+      this.watcherHandle.onChange(() => {
+        this.scheduleRefresh();
+      });
+    } catch (err) {
+      this.logger.warn(`Apple Shortcuts: fs watch failed: ${describe(err)}`);
+    }
+  }
+
+  private async refresh(): Promise<boolean> {
     if (this.refreshing) {
       this.refreshQueued = true;
-      return;
+      return false;
     }
     this.refreshing = true;
     try {
-      const fresh = await pullList(this.shell);
+      await this.ensureWatcher();
+      // The database is the richer source (icon colour/glyph, subtitle,
+      // input flag). The same tracked shell transaction falls back to
+      // `shortcuts list`, so it fails only if neither source can refresh.
+      const result = await pullShortcutList(this.shell);
+      const fresh = result.shortcuts;
+      if (result.source === 'database') {
+        await this.icons.apply(fresh);
+      } else {
+        this.logger.warn(
+          'Apple Shortcuts: database read failed; using the basic shortcuts list',
+        );
+      }
+      const { warning, rowWarning } = this.describeDegradation(result.source);
+      this.refreshFailed = false;
+      this.refreshPausedUntil = 0;
       this.shortcuts = fresh;
       await this.state.set(STATE_KEY, fresh);
-      await this.publishDynamicCommands(fresh);
+      await this.setRefreshWarning(warning);
+      await this.publishDynamicCommands(fresh, rowWarning);
       try {
         await saveShortcutsCache(this.storage, fresh);
       } catch (err) {
         this.logger.warn(`Apple Shortcuts: cache save failed: ${describe(err)}`);
       }
       this.logger.info(`Apple Shortcuts: indexed ${fresh.length} shortcuts`);
+      return true;
     } catch (err) {
-      this.logger.error(`Apple Shortcuts: list failed: ${describe(err)}`);
+      const detail = describe(err);
+      this.logger.error(`Apple Shortcuts: list failed: ${detail}`);
+      const firstFailure = !this.refreshFailed;
+      this.refreshFailed = true;
+      this.refreshPausedUntil = Date.now() + FAILURE_COOLDOWN_MS;
+      if (firstFailure) {
+        // One self-scheduled retry per episode heals a transient failure
+        // without the user noticing. If it fails too, further attempts
+        // wait for an fs event past the cooldown or for the user.
+        this.scheduleRefresh();
+      }
+      const warning = this.shortcuts.length > 0 ? STALE_LIST_WARNING : EMPTY_LIST_WARNING;
+      await this.setRefreshWarning(warning);
+      if (this.shortcuts.length > 0) {
+        // Rows survive, so they carry the warning themselves.
+        if (this.dynamicCommandWarning !== STALE_LIST_DESCRIPTION) {
+          await this.publishDynamicCommands(this.shortcuts, STALE_LIST_DESCRIPTION);
+        }
+      } else if (firstFailure) {
+        await this.reportRefreshFailure(EMPTY_LIST_WARNING, detail);
+      }
+      return false;
     } finally {
       this.refreshing = false;
       if (this.refreshQueued) {
         this.refreshQueued = false;
-        void this.refresh();
+        // A request queued behind a failing refresh is dropped; the
+        // cooldown decides when the next attempt runs.
+        if (!this.refreshFailed) void this.refresh();
       }
     }
+  }
+
+  /**
+   * Warnings for a refresh that succeeded but in a degraded state: the
+   * CLI fallback (no icons or input flags) and/or no fs watch (the list
+   * cannot update on its own). `warning` feeds the SearchView banner,
+   * `rowWarning` the dynamic-command subtitles.
+   */
+  private describeDegradation(source: 'database' | 'cli'): {
+    warning: string | null;
+    rowWarning?: string;
+  } {
+    const watcherDown = !this.watcherHandle;
+    if (source === 'cli' && watcherDown) {
+      return {
+        warning: BASIC_WATCH_FAILED_WARNING,
+        rowWarning: BASIC_WATCH_FAILED_DESCRIPTION,
+      };
+    }
+    if (source === 'cli') {
+      return { warning: BASIC_LIST_WARNING, rowWarning: BASIC_LIST_DESCRIPTION };
+    }
+    if (watcherDown) {
+      return { warning: WATCH_FAILED_WARNING, rowWarning: WATCH_FAILED_DESCRIPTION };
+    }
+    return { warning: null };
   }
 
   /**
@@ -223,28 +438,29 @@ class ShortcutsWorker implements Extension {
    * against its registry internally and removes stale entries — we do
    * not need to track previous state on this side.
    *
-   * Each shortcut declares the inline `input` text argument *only* when
-   * the user has marked it via the SearchView toggle as one that uses
-   * Shortcut Input (`--input-path`). Default-off acknowledges that most
-   * shortcuts don't consume Shortcut Input — they either take no input
-   * or use internal "Ask Each Time" actions, both of which ignore our
-   * piped input. Showing a chip in those cases would mislead the user.
+   * Each shortcut declares the inline `input` text argument only when the
+   * database flag says it consumes Shortcut Input. Shortcuts without
+   * input ignore piped stdin, so a chip for them would mislead.
    */
-  private async publishDynamicCommands(list: Shortcut[]): Promise<void> {
+  private async publishDynamicCommands(
+    list: Shortcut[],
+    warning?: string,
+  ): Promise<void> {
     const regs: DynamicCommandRegistration[] = list.map((s) => {
-      const accepts = this.acceptsInput[s.id] === true;
+      const accepts = s.takesInput === true;
       const reg: DynamicCommandRegistration = {
         id: s.id,
         name: s.name,
-        description: 'Apple Shortcut',
-        icon: '🔗',
+        description: warning,
+        typeLabel: 'Apple Shortcut',
+        icon: s.icon ?? APP_ICON,
       };
       if (accepts) {
         reg.arguments = [
           {
             name: 'input',
             type: 'text' as const,
-            placeholder: 'Input passed via stdin',
+            placeholder: 'Input...',
           },
         ];
       }
@@ -252,6 +468,7 @@ class ShortcutsWorker implements Extension {
     });
     try {
       await this.commands.replaceDynamicCommands(regs);
+      this.dynamicCommandWarning = warning;
     } catch (err) {
       this.logger.error(
         `Apple Shortcuts: replaceDynamicCommands failed: ${describe(err)}`,
@@ -259,54 +476,16 @@ class ShortcutsWorker implements Extension {
     }
   }
 
-  /**
-   * Toggle the "accepts input" flag for a single shortcut. Persists the
-   * full map to extension storage and re-publishes the dynamic command
-   * list so the launcher's argument-mode immediately reflects the new
-   * state — flipping the toggle in the SearchView updates root-search
-   * behavior on the next keystroke.
-   */
-  async setAcceptsInput(uuid: string, accepts: boolean): Promise<void> {
-    const next: AcceptsInputFlags = { ...this.acceptsInput };
-    if (accepts) {
-      next[uuid] = true;
-    } else {
-      delete next[uuid];
-    }
-    this.acceptsInput = next;
+  private async setRefreshWarning(message: string | null): Promise<void> {
     try {
-      await this.storage.set(STORAGE_KEY_FLAGS, JSON.stringify(next));
+      await this.state.set(REFRESH_WARNING_STATE_KEY, message);
     } catch (err) {
       this.logger.warn(
-        `Apple Shortcuts: persisting acceptsInput flags failed: ${describe(err)}`,
+        `Apple Shortcuts: refresh warning update failed: ${describe(err)}`,
       );
     }
-    await this.state.set(STATE_KEY_FLAGS, next);
-    await this.publishDynamicCommands(this.shortcuts);
   }
 
-  private async loadAcceptsInputFlags(): Promise<void> {
-    try {
-      const raw = await this.storage.get(STORAGE_KEY_FLAGS);
-      if (raw) {
-        const parsed = JSON.parse(raw) as unknown;
-        if (parsed && typeof parsed === 'object') {
-          // Defensive: only keep boolean true entries; reject anything else.
-          const cleaned: AcceptsInputFlags = {};
-          for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-            if (v === true) cleaned[k] = true;
-          }
-          this.acceptsInput = cleaned;
-        }
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Apple Shortcuts: acceptsInput flags load failed: ${describe(err)}`,
-      );
-      this.acceptsInput = {};
-    }
-    await this.state.set(STATE_KEY_FLAGS, this.acceptsInput);
-  }
 }
 
 function describe(err: unknown): string {
@@ -337,16 +516,15 @@ workerContext.onRequest<
   { ok: true } | { ok: false; message: string }
 >('runShortcut', ({ name, input }) => impl.runByName(name, input));
 
-// SearchView toggles "this shortcut accepts input via stdin" per row.
-// Worker persists the flag and re-publishes so the launcher's
-// argument-mode reflects the new state immediately.
 workerContext.onRequest<
-  { uuid: string; accepts: boolean },
-  { ok: true }
->('setAcceptsInput', async ({ uuid, accepts }) => {
-  await impl.setAcceptsInput(uuid, accepts);
-  return { ok: true };
-});
+  { name: string },
+  { ok: true } | { ok: false; message: string }
+>('editShortcut', ({ name }) => impl.editByName(name));
+
+workerContext.onRequest<Record<string, never>, { ok: boolean }>(
+  'refreshShortcuts',
+  async () => ({ ok: await impl.retryRefresh() }),
+);
 
 void (async () => {
   try {
