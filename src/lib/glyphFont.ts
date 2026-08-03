@@ -36,13 +36,12 @@ export function isFontGlyph(glyph: number | undefined): boolean {
  *
  * `fold` re-chunks the payload so it arrives in a few dozen messages rather
  * than a couple of thousand, and the trailing `echo` terminates the last
- * line. Silent because this is plumbing the user never asked for.
+ * line. The launcher owns presentation for this internal plumbing.
  */
 export function readGlyphFont(shell: IShellService): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const handle = shell.spawn({
       program: '/bin/sh',
-      silent: true,
       args: [
         '-c',
         `{ /usr/bin/base64 -i ${FONT_PATH} | /usr/bin/tr -d '\\n' | /usr/bin/fold -w 8192; echo; }`,

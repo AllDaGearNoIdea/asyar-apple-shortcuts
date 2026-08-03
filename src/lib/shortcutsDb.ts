@@ -47,15 +47,14 @@ export interface ShortcutListResult {
  * fails only when the extension cannot refresh at all. The SQL contains
  * no quotes and no user input.
  *
- * The refresh is plumbing the user never asked for, so the spawn is
- * `silent`: the outcome stays out of notifications, the failure toast and
- * the launcher list, and the caller reports failures in the UI instead.
+ * This refresh is internal plumbing, so the launcher owns its routine
+ * subprocess presentation while the caller reports refresh failures in the
+ * UI.
  */
 export function pullShortcutList(shell: IShellService): Promise<ShortcutListResult> {
   return new Promise((resolve, reject) => {
     const handle: ShellHandle = shell.spawn({
       program: '/bin/sh',
-      silent: true,
       args: [
         '-c',
         [

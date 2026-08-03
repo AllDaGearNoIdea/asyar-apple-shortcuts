@@ -38,10 +38,9 @@ export class ShortcutHandoffError extends Error {}
  * value is supplied. With no input, we run `shortcuts run` directly to
  * avoid the extra trust prompt for `/bin/sh`.
  *
- * The spawn is `silent` because the launcher would otherwise announce
- * every successful run with a "Script finished" notification quoting the
- * raw command line. Silence covers failures too, so the caller reports
- * those itself.
+ * The launcher owns routine subprocess presentation. The callbacks below
+ * still distinguish a failed hand-off from a non-zero shortcut exit so the
+ * caller can preserve its existing error handling.
  */
 export function runShortcut(
   shell: IShellService,
@@ -53,7 +52,6 @@ export function runShortcut(
       input !== undefined && input !== ''
         ? shell.spawn({
             program: '/bin/sh',
-            silent: true,
             args: [
               '-c',
               `printf %s ${shQuote(input)} | /usr/bin/shortcuts run ${shQuote(idOrName)} --input-path -`,
@@ -61,7 +59,6 @@ export function runShortcut(
           })
         : shell.spawn({
             program: '/usr/bin/shortcuts',
-            silent: true,
             args: ['run', idOrName],
           });
 
@@ -93,7 +90,6 @@ export function openShortcutInEditor(
   return new Promise((resolve, reject) => {
     const handle = shell.spawn({
       program: '/bin/sh',
-      silent: true,
       args: ['-c', `/usr/bin/open ${shQuote(url)}`],
     });
     handle.onDone((code) => {

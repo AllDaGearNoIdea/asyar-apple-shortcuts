@@ -198,8 +198,8 @@ class ShortcutsWorker implements Extension {
 
   /**
    * Hand a shortcut to Shortcuts.app for editing. Unlike running, this has
-   * no silent-failure mode worth a notification: the app comes to the front
-   * on success, and its absence is the error message the view shows.
+   * no background-failure notification: the app comes to the front on
+   * success, and its absence is the error message the view shows.
    */
   async editByName(
     name: string,
