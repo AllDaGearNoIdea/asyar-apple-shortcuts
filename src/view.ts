@@ -1,11 +1,5 @@
-import 'asyar-sdk/tokens.css';
-import './lib/launcherList/tokens-extra.css';
 import { mount } from 'svelte';
-import {
-  ExtensionContext,
-  extensionBridge,
-  registerIconElement,
-} from 'asyar-sdk/view';
+import { ExtensionContext, extensionBridge } from 'asyar-sdk/view';
 import type {
   Extension,
   IExtensionManager,
@@ -43,7 +37,6 @@ const extensionId =
 
 const context = new ExtensionContext();
 context.setExtensionId(extensionId);
-registerIconElement();
 
 const impl = new ShortcutsView();
 extensionBridge.registerManifest(manifest as never);

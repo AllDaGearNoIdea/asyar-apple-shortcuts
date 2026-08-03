@@ -26,7 +26,13 @@ import {
 } from './lib/shortcutsWorker';
 import { pullShortcutList } from './lib/shortcutsDb';
 import { ShortcutIconResolver } from './lib/shortcutIcons';
+import { shortcutIconOrFallback } from './lib/shortcutList';
 import { loadShortcutsCache, saveShortcutsCache } from './lib/store';
+import type {
+  RefreshShortcutsReply,
+  RunShortcutRequest,
+  ShortcutRpcReply,
+} from './lib/shortcutsRpc';
 
 const STATE_KEY = 'shortcuts.list';
 const REFRESH_WARNING_STATE_KEY = 'shortcuts.refreshWarning';
@@ -57,9 +63,9 @@ const APP_ICON = manifest.icon;
  * one promotes into argument-entry mode, where the user can type optional
  * input that is piped to `/usr/bin/shortcuts run … --input-path -`.
  *
- * The dedicated SearchView (manifest command id `open`) is kept as an
- * alternative entry point — some users prefer browsing the full list in
- * one place, especially when they don't remember the exact name.
+ * The dedicated SearchView (manifest command id `open`) publishes the same
+ * shortcuts into a host-drawn full list — some users prefer browsing them
+ * in one place, especially when they don't remember the exact name.
  *
  * Refresh sources:
  *   - on activate (after restoring from cache)
@@ -67,7 +73,7 @@ const APP_ICON = manifest.icon;
  *   - after a failure: one self-scheduled retry per failure episode, then
  *     fs-event retries spaced by the cooldown, then user-driven retries
  *     (the SearchView retries once on open while a warning is showing,
- *     and has a Retry button)
+ *     and exposes a controller-wide Retry Refresh action)
  *
  * Every refresh also re-attempts the fs watch when it is down, so the
  * user-driven paths heal a dead watcher too.
@@ -185,15 +191,16 @@ class ShortcutsWorker implements Extension {
   onUnload = (): void => {};
 
   /**
-   * Run a shortcut by name + optional input. Used by the SearchView via
-   * the `runShortcut` RPC; the dynamic-command path goes through
-   * `executeCommand` above.
+   * Run a shortcut by its stable UUID, retaining its current name for logs and
+   * errors. Used by the host-list controller via the `runShortcut` RPC; the
+   * dynamic-command path goes through `executeCommand` above.
    */
-  async runByName(
+  async runById(
+    id: string,
     name: string,
     input?: string,
-  ): Promise<{ ok: true } | { ok: false; message: string }> {
-    return this.runShortcutAndReport({ id: name, name }, input);
+  ): Promise<ShortcutRpcReply> {
+    return this.runShortcutAndReport({ id, name }, input);
   }
 
   /**
@@ -217,10 +224,9 @@ class ShortcutsWorker implements Extension {
 
   /**
    * Both entry points land here. Only a failed hand-off is ours to report:
-   * nothing ran, the launcher has usually hidden by then, and the
-   * SearchView's inline error will not be read. Once `shortcuts` has the
-   * job, its own failures are its own to announce, and duplicating them
-   * would put two notifications on screen for one error.
+   * nothing ran, and the launcher may already be hidden by then. Once
+   * `shortcuts` has the job, its own failures are its own to announce, and
+   * duplicating them would put two notifications on screen for one error.
    *
    * `name` is absent when the launcher dispatched an id we cannot resolve;
    * the notification then carries the error alone rather than a raw UUID.
@@ -293,11 +299,11 @@ class ShortcutsWorker implements Extension {
   }
 
   /**
-   * User-driven retry: the SearchView calls this once on open while a
-   * warning is showing, and from its Retry button. Goes through refresh()
-   * so it also re-attempts a dead fs watch.
+   * User-driven retry: the SearchView calls this once on open while a warning
+   * is showing, and from its Retry Refresh action. Goes through refresh() so
+   * it also re-attempts a dead fs watch.
    */
-  async retryRefresh(): Promise<boolean> {
+  async retryRefresh(): Promise<RefreshShortcutsReply> {
     return this.refresh();
   }
 
@@ -339,10 +345,10 @@ class ShortcutsWorker implements Extension {
     }
   }
 
-  private async refresh(): Promise<boolean> {
+  private async refresh(): Promise<RefreshShortcutsReply> {
     if (this.refreshing) {
       this.refreshQueued = true;
-      return false;
+      return { status: 'queued' };
     }
     this.refreshing = true;
     try {
@@ -372,7 +378,7 @@ class ShortcutsWorker implements Extension {
         this.logger.warn(`Apple Shortcuts: cache save failed: ${describe(err)}`);
       }
       this.logger.info(`Apple Shortcuts: indexed ${fresh.length} shortcuts`);
-      return true;
+      return { status: 'refreshed' };
     } catch (err) {
       const detail = describe(err);
       this.logger.error(`Apple Shortcuts: list failed: ${detail}`);
@@ -395,7 +401,7 @@ class ShortcutsWorker implements Extension {
       } else if (firstFailure) {
         await this.reportRefreshFailure(EMPTY_LIST_WARNING, detail);
       }
-      return false;
+      return { status: 'failed', message: detail };
     } finally {
       this.refreshing = false;
       if (this.refreshQueued) {
@@ -410,7 +416,7 @@ class ShortcutsWorker implements Extension {
   /**
    * Warnings for a refresh that succeeded but in a degraded state: the
    * CLI fallback (no icons or input flags) and/or no fs watch (the list
-   * cannot update on its own). `warning` feeds the SearchView banner,
+   * cannot update on its own). `warning` feeds the host-list feedback,
    * `rowWarning` the dynamic-command subtitles.
    */
   private describeDegradation(source: 'database' | 'cli'): {
@@ -453,7 +459,7 @@ class ShortcutsWorker implements Extension {
         name: s.name,
         description: warning,
         typeLabel: 'Apple Shortcut',
-        icon: s.icon ?? APP_ICON,
+        icon: shortcutIconOrFallback(s.icon, APP_ICON),
       };
       if (accepts) {
         reg.arguments = [
@@ -509,21 +515,21 @@ const impl = new ShortcutsWorker(workerContext);
 extensionBridge.registerManifest(manifest as never);
 extensionBridge.registerExtensionImplementation(extensionId, impl as never);
 
-// Kept for the SearchView fallback: the view sends `runShortcut` with a
-// shortcut name (and optional input) to ask the worker to invoke it.
+// The host-list controller sends the stable UUID used by `shortcuts run`, plus
+// the current name for logs/errors and optional input for stdin.
 workerContext.onRequest<
-  { name: string; input?: string },
-  { ok: true } | { ok: false; message: string }
->('runShortcut', ({ name, input }) => impl.runByName(name, input));
+  RunShortcutRequest,
+  ShortcutRpcReply
+>('runShortcut', ({ id, name, input }) => impl.runById(id, name, input));
 
 workerContext.onRequest<
   { name: string },
   { ok: true } | { ok: false; message: string }
 >('editShortcut', ({ name }) => impl.editByName(name));
 
-workerContext.onRequest<Record<string, never>, { ok: boolean }>(
+workerContext.onRequest<Record<string, never>, RefreshShortcutsReply>(
   'refreshShortcuts',
-  async () => ({ ok: await impl.retryRefresh() }),
+  () => impl.retryRefresh(),
 );
 
 void (async () => {

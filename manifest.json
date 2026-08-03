@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "description": "Search and run Apple Shortcuts with optional input.",
   "author": "Developer",
-  "icon": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22b%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%22.55%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%235B23E3%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%233A0EA0%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22l%22%20x1%3D%220%22%20y1%3D%221%22%20x2%3D%221%22%20y2%3D%22.1%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%237C8FEA%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23F0AFEE%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22u%22%20x1%3D%22.1%22%20y1%3D%220%22%20x2%3D%22.9%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23F55F6C%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23EE93E2%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214.5%22%20fill%3D%22url%28%23b%29%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2226%22%20width%3D%2224%22%20height%3D%2224%22%20rx%3D%226.5%22%20transform%3D%22rotate%2845%2032%2038%29%22%20fill%3D%22url%28%23l%29%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2214%22%20width%3D%2224%22%20height%3D%2224%22%20rx%3D%226.5%22%20transform%3D%22rotate%2845%2032%2026%29%22%20fill%3D%22url%28%23u%29%22%20opacity%3D%220.9%22%2F%3E%3C%2Fsvg%3E",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJiIiB4MT0iMCIgeTE9IjAiIHgyPSIuNTUiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM1QjIzRTMiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMzQTBFQTAiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0ibCIgeDE9IjAiIHkxPSIxIiB4Mj0iMSIgeTI9Ii4xIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM3QzhGRUEiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNGMEFGRUUiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0idSIgeDE9Ii4xIiB5MT0iMCIgeDI9Ii45IiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjRjU1RjZDIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjRUU5M0UyIi8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQuNSIgZmlsbD0idXJsKCNiKSIvPjxyZWN0IHg9IjIwIiB5PSIyNiIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiByeD0iNi41IiB0cmFuc2Zvcm09InJvdGF0ZSg0NSAzMiAzOCkiIGZpbGw9InVybCgjbCkiLz48cmVjdCB4PSIyMCIgeT0iMTQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgcng9IjYuNSIgdHJhbnNmb3JtPSJyb3RhdGUoNDUgMzIgMjYpIiBmaWxsPSJ1cmwoI3UpIiBvcGFjaXR5PSIwLjkiLz48L3N2Zz4=",
   "type": "extension",
   "searchable": true,
-  "asyarSdk": "^4.0.0",
+  "asyarSdk": "^4.7.0",
   "platforms": ["macos"],
   "background": { "main": "dist/worker.js" },
   "permissions": [
@@ -28,6 +28,7 @@
       "name": "Apple Shortcuts",
       "description": "Search and run Apple Shortcuts",
       "mode": "view",
+      "layout": "list",
       "component": "SearchView"
     }
   ]
