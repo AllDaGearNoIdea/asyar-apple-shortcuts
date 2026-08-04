@@ -27,12 +27,13 @@ import {
 import { pullShortcutList } from './lib/shortcutsDb';
 import { ShortcutIconResolver } from './lib/shortcutIcons';
 import { shortcutIconOrFallback } from './lib/shortcutList';
+import { runShortcutWithReporting } from './lib/shortcutRunCoordinator';
 import { loadShortcutsCache, saveShortcutsCache } from './lib/store';
 import type {
   RefreshShortcutsReply,
-  RunShortcutRequest,
   ShortcutRpcReply,
 } from './lib/shortcutsRpc';
+import { registerShortcutRunRequest } from './lib/shortcutsRpc';
 
 const STATE_KEY = 'shortcuts.list';
 const REFRESH_WARNING_STATE_KEY = 'shortcuts.refreshWarning';
@@ -236,40 +237,32 @@ class ShortcutsWorker implements Extension {
     input?: string,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     const label = target.name ?? target.id;
-    try {
-      await runShortcut(this.shell, target.id, input);
-      this.logger.info(
-        `Apple Shortcuts: ran "${label}"${input ? ' with input' : ''}`,
-      );
-      return { ok: true };
-    } catch (err) {
-      const message = describe(err);
-      this.logger.error(`Apple Shortcuts: run "${label}" failed: ${message}`);
-      if (err instanceof ShortcutHandoffError) {
-        await this.notifyRunFailure(target.name, message);
-      }
-      return { ok: false, message };
-    }
-  }
-
-  /**
-   * `sendBackground` is the notification path for work with no Asyar window
-   * attached. Gated by `notifications:send`.
-   */
-  private async notifyRunFailure(
-    name: string | undefined,
-    message: string,
-  ): Promise<void> {
-    try {
-      await this.feedback.sendBackground({
-        title: 'Shortcut failed',
-        body: name ? `${name}: ${message}` : message,
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Apple Shortcuts: failure notification failed: ${describe(err)}`,
-      );
-    }
+    return runShortcutWithReporting(
+      () => runShortcut(this.shell, target.id, input),
+      {
+        onSuccess: () => {
+          this.logger.info(
+            `Apple Shortcuts: ran "${label}"${input ? ' with input' : ''}`,
+          );
+        },
+        onRunFailure: (message) => {
+          this.logger.error(
+            `Apple Shortcuts: run "${label}" failed: ${message}`,
+          );
+        },
+        isHandoffFailure: (error) => error instanceof ShortcutHandoffError,
+        notifyHandoffFailure: (message) =>
+          this.feedback.sendBackground({
+            title: 'Shortcut failed',
+            body: target.name ? `${target.name}: ${message}` : message,
+          }),
+        onNotificationFailure: (error) => {
+          this.logger.warn(
+            `Apple Shortcuts: failure notification failed: ${describe(error)}`,
+          );
+        },
+      },
+    );
   }
 
   /**
@@ -517,10 +510,9 @@ extensionBridge.registerExtensionImplementation(extensionId, impl as never);
 
 // The host-list controller sends the stable UUID used by `shortcuts run`, plus
 // the current name for logs/errors and optional input for stdin.
-workerContext.onRequest<
-  RunShortcutRequest,
-  ShortcutRpcReply
->('runShortcut', ({ id, name, input }) => impl.runById(id, name, input));
+registerShortcutRunRequest(workerContext, (id, name, input) =>
+  impl.runById(id, name, input),
+);
 
 workerContext.onRequest<
   { name: string },
