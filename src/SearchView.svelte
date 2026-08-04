@@ -15,7 +15,7 @@
     shortcutListItem,
   } from './lib/shortcutList';
   import {
-    dismissLauncherAfterShortcutHandoff,
+    dismissLauncherForShortcutRun,
     refreshFailureMessage,
     shortcutRunRequest,
     type RefreshShortcutsReply,
@@ -126,15 +126,16 @@
 
   async function runShortcut(shortcut: Shortcut, input?: string): Promise<void> {
     try {
-      const reply = await context.request<ShortcutRpcReply>(
-        'runShortcut',
-        shortcutRunRequest(shortcut, input),
+      const reply = await dismissLauncherForShortcutRun(
+        context.request<ShortcutRpcReply>(
+          'runShortcut',
+          shortcutRunRequest(shortcut, input),
+        ),
+        () => context.hideLauncher(),
       );
       if (!reply.ok) {
         reportError('shortcuts/run-failed', reply.message);
-        return;
       }
-      dismissLauncherAfterShortcutHandoff(reply, () => context.hideLauncher());
     } catch (err: unknown) {
       reportError('shortcuts/run-failed', err);
     }

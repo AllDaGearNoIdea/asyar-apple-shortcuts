@@ -10,7 +10,7 @@ import {
   shortcutListItem,
 } from '../src/lib/shortcutList.ts';
 import {
-  dismissLauncherAfterShortcutHandoff,
+  dismissLauncherForShortcutRun,
   acknowledgeStartedShortcutRun,
   refreshFailureMessage,
   registerShortcutRunRequest,
@@ -81,23 +81,42 @@ test('dynamic shortcut input also starts empty without last-used persistence', (
   ]);
 });
 
-test('successful shortcut handoff dismisses the launcher', () => {
-  let hidden = 0;
-  dismissLauncherAfterShortcutHandoff({ ok: true }, () => {
-    hidden += 1;
+test('shortcut dispatch dismisses before the handoff acknowledgement settles', async () => {
+  const order = [];
+  let settle;
+  const pending = new Promise((resolve) => {
+    settle = resolve;
   });
-  assert.equal(hidden, 1);
+
+  const observed = dismissLauncherForShortcutRun(pending, () => {
+    order.push('hidden');
+  }).then((reply) => {
+    order.push(reply.ok ? 'acknowledged' : 'failed');
+    return reply;
+  });
+
+  assert.deepEqual(order, ['hidden']);
+  settle({ ok: true });
+  assert.deepEqual(await observed, { ok: true });
+  assert.deepEqual(order, ['hidden', 'acknowledged']);
 });
 
-test('failed shortcut handoff keeps the launcher open for feedback and retry', () => {
+test('shortcut dispatch preserves a later failure reply for reporting', async () => {
+  const failure = Promise.resolve({
+    ok: false,
+    message: 'Shortcut could not start',
+  });
   let hidden = 0;
-  dismissLauncherAfterShortcutHandoff(
-    { ok: false, message: 'Shortcut could not start' },
-    () => {
-      hidden += 1;
-    },
-  );
-  assert.equal(hidden, 0);
+
+  const reply = await dismissLauncherForShortcutRun(failure, () => {
+    hidden += 1;
+  });
+
+  assert.equal(hidden, 1);
+  assert.deepEqual(reply, {
+    ok: false,
+    message: 'Shortcut could not start',
+  });
 });
 
 test('builds the stable-id run RPC payload and omits only absent input', () => {

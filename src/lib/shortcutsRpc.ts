@@ -46,14 +46,22 @@ export function shortcutRunRequest(
   };
 }
 
-/** A successful run request is a completed launcher action: hand focus back
- * to the user's previous app. Failures deliberately keep the list visible so
- * its feedback remains readable and the action can be retried. */
-export function dismissLauncherAfterShortcutHandoff(
-  reply: ShortcutRpcReply,
+/**
+ * Starting a run is a completed launcher action: hand focus back to the
+ * user's previous app as soon as the view-to-worker request has been
+ * dispatched. This deliberately matches the root dynamic-command path,
+ * which also dismisses without waiting for the shortcut process to finish
+ * (or for the worker's handoff grace period to elapse).
+ *
+ * Return the original promise so callers can still observe and report an
+ * immediate handoff failure after the launcher has gone away.
+ */
+export function dismissLauncherForShortcutRun<T>(
+  request: Promise<T>,
   hideLauncher: () => void,
-): void {
-  if (reply.ok) hideLauncher();
+): Promise<T> {
+  hideLauncher();
+  return request;
 }
 
 /**
