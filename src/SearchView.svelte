@@ -15,6 +15,7 @@
     shortcutListItem,
   } from './lib/shortcutList';
   import {
+    dismissLauncherAfterShortcutHandoff,
     refreshFailureMessage,
     shortcutRunRequest,
     type RefreshShortcutsReply,
@@ -129,7 +130,11 @@
         'runShortcut',
         shortcutRunRequest(shortcut, input),
       );
-      if (!reply.ok) reportError('shortcuts/run-failed', reply.message);
+      if (!reply.ok) {
+        reportError('shortcuts/run-failed', reply.message);
+        return;
+      }
+      dismissLauncherAfterShortcutHandoff(reply, () => context.hideLauncher());
     } catch (err: unknown) {
       reportError('shortcuts/run-failed', err);
     }

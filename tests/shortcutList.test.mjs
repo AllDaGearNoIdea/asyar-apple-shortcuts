@@ -10,6 +10,7 @@ import {
   shortcutListItem,
 } from '../src/lib/shortcutList.ts';
 import {
+  dismissLauncherAfterShortcutHandoff,
   acknowledgeStartedShortcutRun,
   refreshFailureMessage,
   registerShortcutRunRequest,
@@ -78,6 +79,25 @@ test('dynamic shortcut input also starts empty without last-used persistence', (
   assert.deepEqual(command.arguments, [
     { name: 'input', type: 'text', placeholder: 'Input...', seed: 'none' },
   ]);
+});
+
+test('successful shortcut handoff dismisses the launcher', () => {
+  let hidden = 0;
+  dismissLauncherAfterShortcutHandoff({ ok: true }, () => {
+    hidden += 1;
+  });
+  assert.equal(hidden, 1);
+});
+
+test('failed shortcut handoff keeps the launcher open for feedback and retry', () => {
+  let hidden = 0;
+  dismissLauncherAfterShortcutHandoff(
+    { ok: false, message: 'Shortcut could not start' },
+    () => {
+      hidden += 1;
+    },
+  );
+  assert.equal(hidden, 0);
 });
 
 test('builds the stable-id run RPC payload and omits only absent input', () => {

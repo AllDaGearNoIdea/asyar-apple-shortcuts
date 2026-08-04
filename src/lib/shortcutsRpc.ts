@@ -46,6 +46,16 @@ export function shortcutRunRequest(
   };
 }
 
+/** A successful run request is a completed launcher action: hand focus back
+ * to the user's previous app. Failures deliberately keep the list visible so
+ * its feedback remains readable and the action can be retried. */
+export function dismissLauncherAfterShortcutHandoff(
+  reply: ShortcutRpcReply,
+  hideLauncher: () => void,
+): void {
+  if (reply.ok) hideLauncher();
+}
+
 /**
  * Start a worker-owned shortcut job and give its handoff a short chance to
  * fail before acknowledging the view transport. Spawn errors normally arrive
