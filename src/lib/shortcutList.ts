@@ -1,4 +1,9 @@
-import type { ListViewItem, ManifestAction } from 'asyar-sdk/contracts';
+import type {
+  CommandArgument,
+  DynamicCommandRegistration,
+  ListViewItem,
+  ManifestAction,
+} from 'asyar-sdk/contracts';
 
 import type { Shortcut } from './shortcutsWorker';
 
@@ -30,21 +35,42 @@ export function shortcutIconOrFallback(
   return icon || fallbackIcon;
 }
 
+/** One-off Shortcut Input must start empty and never enter last-used storage. */
+export function shortcutArguments(
+  shortcut: Pick<Shortcut, 'takesInput'>,
+): CommandArgument[] | undefined {
+  return shortcut.takesInput === true
+    ? [{ name: 'input', type: 'text', placeholder: 'Input...', seed: 'none' }]
+    : undefined;
+}
+
+/** Convert one cached shortcut into its root-search dynamic command. */
+export function shortcutDynamicCommand(
+  shortcut: Shortcut,
+  fallbackIcon: string,
+  warning?: string,
+): DynamicCommandRegistration {
+  return {
+    id: shortcut.id,
+    name: shortcut.name,
+    description: warning,
+    typeLabel: 'Apple Shortcut',
+    icon: shortcutIconOrFallback(shortcut.icon, fallbackIcon),
+    arguments: shortcutArguments(shortcut),
+  };
+}
+
 /** Convert one cached shortcut into the host-owned full-list row contract. */
 export function shortcutListItem(
   shortcut: Shortcut,
   fallbackIcon: string,
 ): ListViewItem {
-  const takesInput = shortcut.takesInput === true;
   return {
     id: shortcut.id,
     title: shortcut.name,
     icon: shortcutIconOrFallback(shortcut.icon, fallbackIcon),
     accessory: 'Shortcut',
-    trailing: takesInput ? [{ kind: 'badge', text: '↪ Input' }] : undefined,
-    arguments: takesInput
-      ? [{ name: 'input', type: 'text', placeholder: 'Input...' }]
-      : undefined,
+    arguments: shortcutArguments(shortcut),
     actions: SHORTCUT_ACTIONS,
   };
 }

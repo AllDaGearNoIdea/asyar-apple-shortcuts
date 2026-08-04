@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   EDIT_SHORTCUT_ACTION,
   RUN_SHORTCUT_ACTION,
+  shortcutDynamicCommand,
   shortcutIconOrFallback,
   shortcutListItem,
 } from '../src/lib/shortcutList.ts';
@@ -20,7 +21,7 @@ import { ShortcutHandoffError } from '../src/lib/shortcutsWorker.ts';
 
 const FALLBACK_ICON = 'data:image/svg+xml;utf8,fallback';
 
-test('maps an input-capable shortcut to the complete host row contract', () => {
+test('maps an input-capable shortcut without a cosmetic row affordance', () => {
   const item = shortcutListItem(
     {
       id: '82D35B42-626E-4939-B246-53CA49A59D30',
@@ -35,9 +36,9 @@ test('maps an input-capable shortcut to the complete host row contract', () => {
   assert.equal(item.title, 'Summarise Clipboard');
   assert.equal(item.icon, 'data:image/png;base64,shortcut');
   assert.equal(item.accessory, 'Shortcut');
-  assert.deepEqual(item.trailing, [{ kind: 'badge', text: '↪ Input' }]);
+  assert.equal(item.trailing, undefined);
   assert.deepEqual(item.arguments, [
-    { name: 'input', type: 'text', placeholder: 'Input...' },
+    { name: 'input', type: 'text', placeholder: 'Input...', seed: 'none' },
   ]);
   assert.deepEqual(
     item.actions?.map(({ id }) => id),
@@ -59,6 +60,24 @@ test('uses the manifest icon and omits input affordances for a basic shortcut', 
   assert.equal(item.trailing, undefined);
   assert.equal(item.arguments, undefined);
   assert.equal(shortcutIconOrFallback(undefined, FALLBACK_ICON), FALLBACK_ICON);
+});
+
+test('dynamic shortcut input also starts empty without last-used persistence', () => {
+  const command = shortcutDynamicCommand(
+    {
+      id: '82D35B42-626E-4939-B246-53CA49A59D30',
+      name: 'Summarise Clipboard',
+      takesInput: true,
+    },
+    FALLBACK_ICON,
+    'May be out of date',
+  );
+
+  assert.equal(command.typeLabel, 'Apple Shortcut');
+  assert.equal(command.description, 'May be out of date');
+  assert.deepEqual(command.arguments, [
+    { name: 'input', type: 'text', placeholder: 'Input...', seed: 'none' },
+  ]);
 });
 
 test('builds the stable-id run RPC payload and omits only absent input', () => {

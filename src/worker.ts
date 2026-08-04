@@ -4,7 +4,6 @@ import {
 } from 'asyar-sdk/worker';
 import type {
   CommandExecuteArgs,
-  DynamicCommandRegistration,
   Extension,
   ExtensionStateProxy,
   IApplicationService,
@@ -26,7 +25,7 @@ import {
 } from './lib/shortcutsWorker';
 import { pullShortcutList } from './lib/shortcutsDb';
 import { ShortcutIconResolver } from './lib/shortcutIcons';
-import { shortcutIconOrFallback } from './lib/shortcutList';
+import { shortcutDynamicCommand } from './lib/shortcutList';
 import { runShortcutWithReporting } from './lib/shortcutRunCoordinator';
 import { loadShortcutsCache, saveShortcutsCache } from './lib/store';
 import type {
@@ -445,26 +444,9 @@ class ShortcutsWorker implements Extension {
     list: Shortcut[],
     warning?: string,
   ): Promise<void> {
-    const regs: DynamicCommandRegistration[] = list.map((s) => {
-      const accepts = s.takesInput === true;
-      const reg: DynamicCommandRegistration = {
-        id: s.id,
-        name: s.name,
-        description: warning,
-        typeLabel: 'Apple Shortcut',
-        icon: shortcutIconOrFallback(s.icon, APP_ICON),
-      };
-      if (accepts) {
-        reg.arguments = [
-          {
-            name: 'input',
-            type: 'text' as const,
-            placeholder: 'Input...',
-          },
-        ];
-      }
-      return reg;
-    });
+    const regs = list.map((shortcut) =>
+      shortcutDynamicCommand(shortcut, APP_ICON, warning),
+    );
     try {
       await this.commands.replaceDynamicCommands(regs);
       this.dynamicCommandWarning = warning;
