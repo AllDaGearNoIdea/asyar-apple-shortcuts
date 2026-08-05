@@ -2,6 +2,8 @@
   "name": "com.asyar.shortcuts",
   "version": "1.0.0",
   "description": "Search and run Apple Shortcuts with optional input",
+  "author": "AllDaGearNoIdea",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "asyar dev",
