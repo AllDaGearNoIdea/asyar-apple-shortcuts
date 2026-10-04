@@ -36,32 +36,17 @@ export function pullList(shell: IShellService): Promise<Shortcut[]> {
 /**
  * Run a shortcut by id or name, optionally piping `input` to it via stdin.
  *
- * macOS' `shortcuts run` only accepts input from a file path
- * (`--input-path`); `-` means stdin. The shell SDK does not expose stdin
- * write on a child process, so we use
- * `/bin/sh -c 'printf … | shortcuts run … --input-path -'` when an input
- * value is supplied. With no input, we run `shortcuts run` directly to
- * avoid the extra trust prompt for `/bin/sh`.
+ * macOS' `shortcuts run` accepts input from stdin with `--input-path -`.
+ * We pass `input` directly via `params.stdin` to `shell.spawn`.
  */
-export function runShortcut(
-  shell: IShellService,
-  idOrName: string,
-  input?: string,
-): Promise<void> {
+export function runShortcut(shell: IShellService, idOrName: string, input?: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const handle: ShellHandle =
-      input !== undefined && input !== ''
-        ? shell.spawn({
-            program: '/bin/sh',
-            args: [
-              '-c',
-              `printf %s ${shQuote(input)} | /usr/bin/shortcuts run ${shQuote(idOrName)} --input-path -`,
-            ],
-          })
-        : shell.spawn({
-            program: '/usr/bin/shortcuts',
-            args: ['run', idOrName],
-          });
+    const hasInput = input !== undefined && input !== '';
+    const handle: ShellHandle = shell.spawn({
+      program: '/usr/bin/shortcuts',
+      args: hasInput ? ['run', idOrName, '--input-path', '-'] : ['run', idOrName],
+      stdin: hasInput ? input : undefined,
+    });
 
     handle.onDone((code) => {
       if (code === 0 || code === undefined) {
@@ -72,15 +57,6 @@ export function runShortcut(
     });
     handle.onError((err) => reject(new Error(err.message)));
   });
-}
-
-/**
- * POSIX single-quote escape: wrap the string in single quotes and replace
- * any embedded single quote with `'\''` (close-quote, escaped quote,
- * reopen-quote). Safe for `/bin/sh -c '…'` even with arbitrary user input.
- */
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 /**
