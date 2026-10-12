@@ -1,6 +1,6 @@
 {
   "name": "com.asyar.shortcuts",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Search and run Apple Shortcuts with optional input",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "svelte": "^5.0.0"
   },
   "devDependencies": {
-    "asyar-sdk": "^2.3.0",
+    "asyar-sdk": "^4.15.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.0.0"

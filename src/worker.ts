@@ -1,7 +1,4 @@
-import {
-  ExtensionContext as WorkerExtensionContext,
-  extensionBridge,
-} from 'asyar-sdk/worker';
+import { ExtensionContext as WorkerExtensionContext, extensionBridge } from 'asyar-sdk/worker';
 import type {
   CommandExecuteArgs,
   DynamicCommandRegistration,
@@ -133,13 +130,9 @@ class ShortcutsWorker implements Extension {
    * dynamic-command id (a UUID) here; we look it up in the in-memory
    * list and run it with the user's optional input.
    */
-  async executeCommand(
-    commandId: string,
-    args?: CommandExecuteArgs,
-  ): Promise<unknown> {
+  async executeCommand(commandId: string, args?: CommandExecuteArgs): Promise<unknown> {
     const userArgs = (args?.arguments ?? {}) as Record<string, unknown>;
-    const input =
-      typeof userArgs.input === 'string' ? userArgs.input : undefined;
+    const input = typeof userArgs.input === 'string' ? userArgs.input : undefined;
 
     const shortcut = this.shortcuts.find((s) => s.id === commandId);
     if (!shortcut) {
@@ -177,15 +170,11 @@ class ShortcutsWorker implements Extension {
       // to name when the cache pre-dates the UUID-parsed format.
       const target = shortcut.id || shortcut.name;
       await runShortcut(this.shell, target, input);
-      this.logger.info(
-        `Apple Shortcuts: ran "${shortcut.name}"${input ? ' with input' : ''}`,
-      );
+      this.logger.info(`Apple Shortcuts: ran "${shortcut.name}"${input ? ' with input' : ''}`);
       return { ok: true };
     } catch (err) {
       const message = describe(err);
-      this.logger.error(
-        `Apple Shortcuts: run "${shortcut.name}" failed: ${message}`,
-      );
+      this.logger.error(`Apple Shortcuts: run "${shortcut.name}" failed: ${message}`);
       return { ok: false, message };
     }
   }
@@ -253,9 +242,7 @@ class ShortcutsWorker implements Extension {
     try {
       await this.commands.replaceDynamicCommands(regs);
     } catch (err) {
-      this.logger.error(
-        `Apple Shortcuts: replaceDynamicCommands failed: ${describe(err)}`,
-      );
+      this.logger.error(`Apple Shortcuts: replaceDynamicCommands failed: ${describe(err)}`);
     }
   }
 
@@ -277,9 +264,7 @@ class ShortcutsWorker implements Extension {
     try {
       await this.storage.set(STORAGE_KEY_FLAGS, JSON.stringify(next));
     } catch (err) {
-      this.logger.warn(
-        `Apple Shortcuts: persisting acceptsInput flags failed: ${describe(err)}`,
-      );
+      this.logger.warn(`Apple Shortcuts: persisting acceptsInput flags failed: ${describe(err)}`);
     }
     await this.state.set(STATE_KEY_FLAGS, next);
     await this.publishDynamicCommands(this.shortcuts);
@@ -300,9 +285,7 @@ class ShortcutsWorker implements Extension {
         }
       }
     } catch (err) {
-      this.logger.warn(
-        `Apple Shortcuts: acceptsInput flags load failed: ${describe(err)}`,
-      );
+      this.logger.warn(`Apple Shortcuts: acceptsInput flags load failed: ${describe(err)}`);
       this.acceptsInput = {};
     }
     await this.state.set(STATE_KEY_FLAGS, this.acceptsInput);
@@ -315,11 +298,7 @@ function describe(err: unknown): string {
   return String(err);
 }
 
-const extensionId =
-  window.location.hostname === 'localhost' ||
-  window.location.hostname === 'asyar-extension.localhost'
-    ? window.location.pathname.split('/').filter(Boolean)[0] || 'com.asyar.shortcuts'
-    : window.location.hostname || 'com.asyar.shortcuts';
+const extensionId = manifest.id;
 
 const workerContext = new WorkerExtensionContext();
 workerContext.setExtensionId(extensionId);
@@ -340,13 +319,13 @@ workerContext.onRequest<
 // SearchView toggles "this shortcut accepts input via stdin" per row.
 // Worker persists the flag and re-publishes so the launcher's
 // argument-mode reflects the new state immediately.
-workerContext.onRequest<
-  { uuid: string; accepts: boolean },
-  { ok: true }
->('setAcceptsInput', async ({ uuid, accepts }) => {
-  await impl.setAcceptsInput(uuid, accepts);
-  return { ok: true };
-});
+workerContext.onRequest<{ uuid: string; accepts: boolean }, { ok: true }>(
+  'setAcceptsInput',
+  async ({ uuid, accepts }) => {
+    await impl.setAcceptsInput(uuid, accepts);
+    return { ok: true };
+  },
+);
 
 void (async () => {
   try {
@@ -357,9 +336,3 @@ void (async () => {
     log.error(`Apple Shortcuts: worker activate failed: ${describe(err)}`);
   }
 })();
-
-window.addEventListener('beforeunload', () => {
-  void impl.deactivate().catch((err) => {
-    log.warn(`Apple Shortcuts: deactivate failed: ${describe(err)}`);
-  });
-});

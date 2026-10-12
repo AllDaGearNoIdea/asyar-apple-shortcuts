@@ -1,21 +1,15 @@
 {
   "id": "com.asyar.shortcuts",
   "name": "Apple Shortcuts",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Search and run Apple Shortcuts with optional input.",
   "author": "Developer",
   "icon": "🔗",
   "type": "extension",
-  "asyarSdk": "^2.3.0",
+  "asyarSdk": "^4.15.0",
   "platforms": ["macos"],
   "background": { "main": "dist/worker.js" },
-  "permissions": [
-    "shell:spawn",
-    "fs:watch",
-    "storage:read",
-    "storage:write",
-    "notifications:send"
-  ],
+  "permissions": ["shell:spawn", "fs:watch", "storage:read", "storage:write", "notifications:send"],
   "permissionArgs": {
     "fs:watch": ["~/Library/Shortcuts/**"]
   },
